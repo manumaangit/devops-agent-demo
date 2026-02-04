@@ -1,0 +1,104 @@
+name: Deploy Lambda and API Gateway to AWS
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+
+env:
+  AWS_REGION: us-east-1
+  STACK_NAME: timeout-demo
+
+jobs:
+  deploy:
+    name: Deploy CloudFormation Stack
+    runs-on: ubuntu-latest
+    
+    permissions:
+      id-token: write
+      contents: read
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::250037328911:role/githubactions_role
+          role-session-name: GitHub_to_AWS_via_FederatedOIDC
+          aws-region: ${{ env.AWS_REGION }}
+          # Alternative: Use access key credentials instead of OIDC
+          # aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          # aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      - name: Determine environment
+        id: env
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "environment=${{ inputs.environment }}" >> $GITHUB_OUTPUT
+          elif [ "${{ github.ref }}" == "refs/heads/main" ]; then
+            echo "environment=prod" >> $GITHUB_OUTPUT
+          else
+            echo "environment=dev" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Deploy CloudFormation stack
+        run: |
+          aws cloudformation deploy \
+            --template-file cloudformation-template.yaml \
+            --stack-name ${{ env.STACK_NAME }} \
+            --capabilities CAPABILITY_IAM \
+            --parameter-overrides Environment=${{ steps.env.outputs.environment }} \
+            --no-fail-on-empty-changeset \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Get Stack Outputs
+        id: stack-outputs
+        run: |
+          API_ENDPOINT=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --region ${{ env.AWS_REGION }} \
+            --query 'Stacks[0].Outputs[?OutputKey==`ApiEndpoint`].OutputValue' \
+            --output text)
+          
+          LAMBDA_NAME=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --region ${{ env.AWS_REGION }} \
+            --query 'Stacks[0].Outputs[?OutputKey==`LambdaFunctionName`].OutputValue' \
+            --output text)
+          
+          echo "api_endpoint=$API_ENDPOINT" >> $GITHUB_OUTPUT
+          echo "lambda_name=$LAMBDA_NAME" >> $GITHUB_OUTPUT
+
+      - name: Display deployment information
+        run: |
+          echo "✅ Deployment successful!"
+          echo "📍 Environment: ${{ steps.env.outputs.environment }}"
+          echo "🔗 API Endpoint: ${{ steps.stack-outputs.outputs.api_endpoint }}"
+          echo "⚡ Lambda Function: ${{ steps.stack-outputs.outputs.lambda_name }}"
+          echo ""
+          echo "Test the API with:"
+          echo "curl -X POST ${{ steps.stack-outputs.outputs.api_endpoint }} -H 'Content-Type: application/json' -d '{\"test\":\"data\"}'"
+
+      - name: Test API endpoint
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          echo "Testing API endpoint (will timeout after 29 seconds)..."
+          curl -X POST ${{ steps.stack-outputs.outputs.api_endpoint }} \
+            -H "Content-Type: application/json" \
+            -d '{"test": "data"}' \
+            --max-time 35 \
+            -w "\nHTTP Status: %{http_code}\n" || echo "Expected timeout occurred"
