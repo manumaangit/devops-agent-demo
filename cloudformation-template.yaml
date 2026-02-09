@@ -74,6 +74,61 @@ Resources:
         Types:
           - REGIONAL
 
+  # API Resource
+  TimeoutDemoResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref TimeoutDemoApi
+      ParentId: !GetAtt TimeoutDemoApi.RootResourceId
+      PathPart: timeout
+
+  # API Method (POST)
+  TimeoutDemoMethod:
+    Type: AWS::ApiGateway::Method
+    DependsOn: TimeoutDemoLambda
+    Properties:
+      RestApiId: !Ref TimeoutDemoApi
+      ResourceId: !Ref TimeoutDemoResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${TimeoutDemoLambda.Arn}/invocations'
+        TimeoutInMillis: 29000  # 29 seconds - API Gateway max timeout
+      MethodResponses:
+        - StatusCode: 200
+
+  # Lambda Permission for API Gateway
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref TimeoutDemoLambda
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${TimeoutDemoApi}/*/*'
+
+  # API Deployment
+  TimeoutDemoDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn: TimeoutDemoMethod
+    Properties:
+      RestApiId: !Ref TimeoutDemoApi
+      Description: !Sub 'Deployment for timeout demo - ${Environment}'
+
+  # API Stage
+  TimeoutDemoStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      StageName: !Ref Environment
+      RestApiId: !Ref TimeoutDemoApi
+      DeploymentId: !Ref TimeoutDemoDeployment
+      Description: !Sub 'Stage for timeout demo - ${Environment}'
+      Variables:
+        Environment: !Ref Environment
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
 
 Outputs:
   LambdaFunctionArn:
@@ -88,9 +143,26 @@ Outputs:
     Export:
       Name: !Sub '${Environment}-TimeoutDemoLambdaName'
 
+  ApiEndpoint:
+    Description: API Gateway endpoint URL
+    Value: !Sub 'https://${TimeoutDemoApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/timeout'
+    Export:
+      Name: !Sub '${Environment}-TimeoutDemoApiEndpoint'
+
+  ApiId:
+    Description: API Gateway API ID
+    Value: !Ref TimeoutDemoApi
+    Export:
+      Name: !Sub '${Environment}-TimeoutDemoApiId'
 
   LambdaTimeoutSeconds:
     Description: Lambda function timeout in seconds
     Value: '900'
     Export:
       Name: !Sub '${Environment}-TimeoutDemoLambdaTimeout'
+
+  ApiGatewayTimeoutSeconds:
+    Description: API Gateway integration timeout in seconds
+    Value: '29'
+    Export:
+      Name: !Sub '${Environment}-TimeoutDemoApiGatewayTimeout'
