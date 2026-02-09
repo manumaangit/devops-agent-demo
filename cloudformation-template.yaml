@@ -101,6 +101,7 @@ Resources:
   # API Method (POST)
   TimeoutDemoMethod:
     Type: AWS::ApiGateway::Method
+    DependsOn: TimeoutDemoLambda
     Properties:
       RestApiId: !Ref TimeoutDemoApi
       ResourceId: !Ref TimeoutDemoResource
