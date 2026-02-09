@@ -32,12 +32,14 @@ Resources:
   # Lambda Function with high timeout (15 minutes)
   TimeoutDemoLambda:
     Type: AWS::Lambda::Function
+    DependsOn:
+      - LambdaExecutionRole
     Properties:
       FunctionName: !Sub 'timeout-demo-lambda-${Environment}'
       Runtime: python3.11
       Handler: index.lambda_handler
       Role: !GetAtt LambdaExecutionRole.Arn
-      Timeout: 900  # 15 minutes - very high timeout
+      Timeout: 900
       MemorySize: 128
       Code:
         ZipFile: |
@@ -45,36 +47,17 @@ Resources:
           import time
 
           def lambda_handler(event, context):
-              """
-              Lambda function with a long-running operation that will exceed
-              API Gateway's maximum integration timeout (29 seconds).
-              
-              This demonstrates API Gateway timeout behavior.
-              """
               print("Lambda function started")
-
-              # Sleep for 35 seconds to exceed API Gateway's 29-second timeout
               sleep_duration = 35
               print(f"Sleeping for {sleep_duration} seconds...")
-              
-              try:
-                  time.sleep(sleep_duration)
-                  
-                  return {
-                      "statusCode": 200,
-                      "body": json.dumps({
-                          "message": "Success! Lambda completed execution.",
-                          "slept_for_seconds": sleep_duration
-                      })
-                  }
-              except Exception as e:
-                  print(f"Error occurred: {str(e)}")
-                  return {
-                      "statusCode": 500,
-                      "body": json.dumps({
-                          "error": str(e)
-                      })
-                  }
+              time.sleep(sleep_duration)
+              return {
+                  "statusCode": 200,
+                  "body": json.dumps({
+                      "message": "Success! Lambda completed execution.",
+                      "slept_for_seconds": sleep_duration
+                  })
+              }
       Description: Lambda function with high timeout to demonstrate API Gateway timeout
       Tags:
         - Key: Environment
@@ -93,6 +76,8 @@ Resources:
   # API Resource
   TimeoutDemoResource:
     Type: AWS::ApiGateway::Resource
+    DependsOn:
+      - TimeoutDemoApi
     Properties:
       RestApiId: !Ref TimeoutDemoApi
       ParentId: !GetAtt TimeoutDemoApi.RootResourceId
@@ -101,7 +86,10 @@ Resources:
   # API Method (POST)
   TimeoutDemoMethod:
     Type: AWS::ApiGateway::Method
-    DependsOn: TimeoutDemoLambda
+    DependsOn:
+      - TimeoutDemoApi
+      - TimeoutDemoResource
+      - TimeoutDemoLambda
     Properties:
       RestApiId: !Ref TimeoutDemoApi
       ResourceId: !Ref TimeoutDemoResource
@@ -110,25 +98,29 @@ Resources:
       Integration:
         Type: AWS_PROXY
         IntegrationHttpMethod: POST
-        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${TimeoutDemoLambda.Arn}/invocations'
-        # API Gateway integration timeout (29 seconds is the maximum)
-        IntegrationResponses:
-          - StatusCode: 200
-        TimeoutInMillis: 29000  # 29 seconds - API Gateway max timeout
+        Uri: !Sub >
+          arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${TimeoutDemoLambda.Arn}/invocations
+        TimeoutInMillis: 29000
 
   # Lambda Permission for API Gateway
   LambdaInvokePermission:
     Type: AWS::Lambda::Permission
+    DependsOn:
+      - TimeoutDemoLambda
+      - TimeoutDemoApi
     Properties:
       FunctionName: !Ref TimeoutDemoLambda
       Action: lambda:InvokeFunction
       Principal: apigateway.amazonaws.com
-      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${TimeoutDemoApi}/*/*'
+      SourceArn: !Sub >
+        arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${TimeoutDemoApi}/*/*
 
   # API Deployment
   TimeoutDemoDeployment:
     Type: AWS::ApiGateway::Deployment
-    DependsOn: TimeoutDemoMethod
+    DependsOn:
+      - TimeoutDemoMethod
+      - LambdaInvokePermission
     Properties:
       RestApiId: !Ref TimeoutDemoApi
       Description: !Sub 'Deployment for timeout demo - ${Environment}'
@@ -136,6 +128,8 @@ Resources:
   # API Stage
   TimeoutDemoStage:
     Type: AWS::ApiGateway::Stage
+    DependsOn:
+      - TimeoutDemoDeployment
     Properties:
       StageName: !Ref Environment
       RestApiId: !Ref TimeoutDemoApi
@@ -162,7 +156,8 @@ Outputs:
 
   ApiEndpoint:
     Description: API Gateway endpoint URL
-    Value: !Sub 'https://${TimeoutDemoApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/timeout'
+    Value: !Sub >
+      https://${TimeoutDemoApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/timeout
     Export:
       Name: !Sub '${Environment}-TimeoutDemoApiEndpoint'
 
