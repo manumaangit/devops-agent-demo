@@ -53,8 +53,8 @@ Resources:
               """
               print("Lambda function started")
 
-              # Sleep for 35 seconds to exceed API Gateway's 29-second timeout
-              sleep_duration = 35
+              # Sleep for 25 seconds
+              sleep_duration = 25
               print(f"Sleeping for {sleep_duration} seconds...")
               
               try:
